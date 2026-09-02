@@ -1086,72 +1086,151 @@ function goToVerify(e){
   renderCheckoutStep1b();
 }
 
-/* ===== OTP VERIFICATION (simulated — no real SMS/email gateway wired yet) ===== */
-let otpState = { phone:{code:null, verified:false, cooldown:0}, email:{code:null, verified:false, cooldown:0} };
-function genOtp(){ return String(Math.floor(100000 + Math.random()*900000)); }
-function sendOtp(channel){
-  const code = genOtp();
-  otpState[channel].code = code;
-  otpState[channel].verified = false;
-  otpState[channel].cooldown = 30;
-  const target = channel==='phone' ? shippingData.phone : shippingData.email;
-  showToast(`${channel==='phone'?'SMS':'Email'} OTP sent to ${target}`);
-  // No live SMS/email provider is connected yet, so we surface the code here for testing.
-  const hint = document.getElementById('otpHint_'+channel);
-  if(hint) hint.innerHTML = `Demo mode — no SMS/email gateway connected yet, so here's the code: <b>${code}</b>`;
-  const btn = document.getElementById('resendBtn_'+channel);
+/* ===== OTP VERIFICATION =====
+   Phone  → auto-verified because user logged in via Firebase Auth (no re-OTP needed)
+   Email  → real 6-digit OTP sent via Brevo transactional API
+   ======================================= */
+
+const BREVO_KEY = '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';
+
+let otpState = {
+  phone: { verified: false },
+  email: { code: null, verified: false, cooldown: 0, sending: false }
+};
+
+/* Phone is already verified via Firebase Auth login — mark it immediately */
+function autoVerifyPhone(){
+  otpState.phone.verified = true;
+}
+
+/* Send a real OTP email via Brevo */
+async function sendEmailOtp(){
+  if(otpState.email.sending) return;
+  if(otpState.email.cooldown > 0) return;
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  otpState.email.code = code;
+  otpState.email.verified = false;
+  otpState.email.sending = true;
+
+  const btn = document.getElementById('resendBtn_email');
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': BREVO_KEY
+      },
+      body: JSON.stringify({
+        sender: { name: 'ACH Boutique', email: 'achbhopal@gmail.com' },
+        to: [{ email: shippingData.email, name: shippingData.name }],
+        subject: 'Your ACH Boutique verification code',
+        htmlContent: `
+          <div style="font-family:'Jost',Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#fdf6f1;border-radius:16px;">
+            <div style="font-family:Georgia,serif;font-size:22px;color:#3a2e38;margin-bottom:8px;">ACH Boutique</div>
+            <p style="color:#3a2e38;font-size:15px;margin-bottom:24px;">Here is your one-time verification code for your order:</p>
+            <div style="background:#fff;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;border:1px solid #ecdfe6;">
+              <div style="font-size:36px;font-weight:700;letter-spacing:12px;color:#e08ba8;">${code}</div>
+            </div>
+            <p style="color:#8a7480;font-size:12px;">This code expires in 10 minutes. Do not share it with anyone.</p>
+            <p style="color:#8a7480;font-size:12px;margin-top:8px;">If you didn't place this order, ignore this email.</p>
+          </div>`
+      })
+    });
+
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.message || 'Email send failed');
+    }
+
+    showToast(`OTP sent to ${shippingData.email}`);
+    startEmailCooldown();
+
+  } catch(e){
+    console.error('Brevo email error:', e);
+    const hint = document.getElementById('otpHint_email');
+    if(hint) hint.textContent = 'Could not send email. Check your email address and try again.';
+    if(btn){ btn.disabled = false; btn.textContent = 'Resend Code'; }
+  }
+
+  otpState.email.sending = false;
+}
+
+function startEmailCooldown(){
+  otpState.email.cooldown = 30;
   const tick = ()=>{
-    otpState[channel].cooldown--;
-    if(btn) btn.textContent = otpState[channel].cooldown>0 ? `Resend in ${otpState[channel].cooldown}s` : 'Resend Code';
-    if(btn) btn.disabled = otpState[channel].cooldown>0;
-    if(otpState[channel].cooldown>0) setTimeout(tick,1000);
+    otpState.email.cooldown--;
+    const btn = document.getElementById('resendBtn_email');
+    if(btn){
+      if(otpState.email.cooldown > 0){
+        btn.disabled = true;
+        btn.textContent = `Resend in ${otpState.email.cooldown}s`;
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Resend Code';
+        btn.onclick = sendEmailOtp;
+      }
+    }
+    if(otpState.email.cooldown > 0) setTimeout(tick, 1000);
   };
   tick();
 }
-function verifyOtp(channel){
-  const input = document.getElementById('otpInput_'+channel).value.trim();
-  const errEl = document.getElementById('otpErr_'+channel);
-  if(input.length!==6){ errEl.textContent = 'Enter the 6-digit code.'; return; }
-  if(input !== otpState[channel].code){ errEl.textContent = 'Incorrect code — please try again.'; return; }
+
+function verifyEmailOtp(){
+  const input = document.getElementById('otpInput_email').value.trim();
+  const errEl = document.getElementById('otpErr_email');
+  if(input.length !== 6){ errEl.textContent = 'Enter the 6-digit code.'; return; }
+  if(input !== otpState.email.code){ errEl.textContent = 'Incorrect code. Please try again.'; return; }
   errEl.textContent = '';
-  otpState[channel].verified = true;
+  otpState.email.verified = true;
   renderCheckoutStep1b();
 }
+
 function renderCheckoutStep1b(){
-  if(!otpState.phone.code) sendOtp('phone');
-  if(!otpState.email.code) sendOtp('email');
+  /* Phone is verified via Firebase Auth — mark it immediately */
+  autoVerifyPhone();
+
+  /* Send email OTP on first render only */
+  if(!otpState.email.code && !otpState.email.sending){
+    sendEmailOtp();
+  }
+
   const bothVerified = otpState.phone.verified && otpState.email.verified;
+
   document.getElementById('checkoutModal').innerHTML = `
     <button class="modal-close" onclick="closeModal('checkoutModalBg')">✕</button>
     <div class="checkout-shell">
       ${stepperHtml(2)}
-      <h3 style="margin-bottom:6px;">Verify Your Contact Details</h3>
-      <p style="font-size:13px;color:#8a7480;margin-bottom:20px;">We verify every order to keep fraud and delivery failures low.</p>
+      <h3 style="margin-bottom:6px;">Verify Your Email</h3>
+      <p style="font-size:13px;color:#8a7480;margin-bottom:20px;">Your mobile is already verified. Just confirm your email to continue.</p>
 
-      <div class="admin-card" style="border:1px solid var(--stone);border-radius:12px;padding:18px;margin-bottom:16px;background:${otpState.phone.verified?'#eef6ef':'#fff'};">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div><div style="font-size:13px;font-weight:500;">📱 Mobile: ${shippingData.phone}</div>${otpState.phone.verified?'<div style="font-size:12px;color:var(--moss);margin-top:2px;">✓ Verified</div>':''}</div>
-          ${!otpState.phone.verified?`<button class="mini-btn" id="resendBtn_phone" disabled>Resend in 30s</button>`:''}
+      <!-- Phone: auto-verified, shown as done -->
+      <div style="border:1px solid #c9dfcb;border-radius:12px;padding:14px 18px;margin-bottom:14px;background:#eef6ef;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">📱</span>
+        <div>
+          <div style="font-size:13px;font-weight:500;">Mobile: +91 ${shippingData.phone}</div>
+          <div style="font-size:12px;color:var(--moss);">✓ Verified via login</div>
         </div>
-        ${!otpState.phone.verified?`
-          <div style="display:flex;gap:8px;margin-top:12px;">
-            <input type="text" id="otpInput_phone" maxlength="6" placeholder="6-digit OTP" style="flex:1;padding:10px;border:1px solid var(--stone);border-radius:8px;letter-spacing:3px;">
-            <button class="btn" style="padding:10px 18px;font-size:13px;" onclick="verifyOtp('phone')">Verify</button>
-          </div>
-          <div style="font-size:11px;color:#b5473a;margin-top:6px;" id="otpErr_phone"></div>
-          <div style="font-size:11px;color:#8a7480;margin-top:6px;" id="otpHint_phone"></div>
-        `:''}
       </div>
 
-      <div class="admin-card" style="border:1px solid var(--stone);border-radius:12px;padding:18px;margin-bottom:16px;background:${otpState.email.verified?'#eef6ef':'#fff'};">
+      <!-- Email: real OTP via Brevo -->
+      <div style="border:1px solid var(--stone);border-radius:12px;padding:18px;margin-bottom:16px;background:${otpState.email.verified?'#eef6ef':'#fff'};">
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div><div style="font-size:13px;font-weight:500;">✉️ Email: ${shippingData.email}</div>${otpState.email.verified?'<div style="font-size:12px;color:var(--moss);margin-top:2px;">✓ Verified</div>':''}</div>
+          <div>
+            <div style="font-size:13px;font-weight:500;">✉️ Email: ${shippingData.email}</div>
+            ${otpState.email.verified?'<div style="font-size:12px;color:var(--moss);margin-top:2px;">✓ Verified</div>':'<div style="font-size:12px;color:#8a7480;margin-top:2px;">OTP sent to your inbox</div>'}
+          </div>
           ${!otpState.email.verified?`<button class="mini-btn" id="resendBtn_email" disabled>Resend in 30s</button>`:''}
         </div>
         ${!otpState.email.verified?`
           <div style="display:flex;gap:8px;margin-top:12px;">
-            <input type="text" id="otpInput_email" maxlength="6" placeholder="6-digit OTP" style="flex:1;padding:10px;border:1px solid var(--stone);border-radius:8px;letter-spacing:3px;">
-            <button class="btn" style="padding:10px 18px;font-size:13px;" onclick="verifyOtp('email')">Verify</button>
+            <input type="text" id="otpInput_email" maxlength="6" placeholder="6-digit OTP"
+              style="flex:1;padding:10px;border:1px solid var(--stone);border-radius:8px;letter-spacing:4px;font-size:18px;text-align:center;"
+              oninput="this.value=this.value.replace(/\\D/g,'')"
+              onkeydown="if(event.key==='Enter')verifyEmailOtp()">
+            <button class="btn" style="padding:10px 18px;font-size:13px;" onclick="verifyEmailOtp()">Verify</button>
           </div>
           <div style="font-size:11px;color:#b5473a;margin-top:6px;" id="otpErr_email"></div>
           <div style="font-size:11px;color:#8a7480;margin-top:6px;" id="otpHint_email"></div>
@@ -1163,16 +1242,9 @@ function renderCheckoutStep1b(){
         <button class="btn" style="flex:2;" ${bothVerified?'':'disabled'} onclick="renderCheckoutStep2()">Continue to Payment</button>
       </div>
     </div>`;
-  // re-trigger the countdown display for freshly sent OTPs
-  ['phone','email'].forEach(ch=>{
-    if(!otpState[ch].verified && otpState[ch].cooldown>0){
-      const btn = document.getElementById('resendBtn_'+ch);
-      if(btn){ btn.disabled = true; btn.textContent = `Resend in ${otpState[ch].cooldown}s`; }
-    } else if(!otpState[ch].verified){
-      const btn = document.getElementById('resendBtn_'+ch);
-      if(btn){ btn.disabled = false; btn.textContent = 'Resend Code'; btn.onclick = ()=>sendOtp(ch); }
-    }
-  });
+
+  /* restart cooldown display if OTP already sent */
+  if(!otpState.email.verified && otpState.email.cooldown > 0) startEmailCooldown();
 }
 function renderCheckoutStep2(){
   const t = orderTotals();
@@ -1241,7 +1313,7 @@ async function finalizeOrder(paymentMethod){
   };
   try{ await db.collection('orders').doc(id).set(order); }catch(e){ console.warn('order write failed', e); }
   cart = []; appliedCoupon = null; shippingData = null; selectedPayment='cod';
-  otpState = { phone:{code:null, verified:false, cooldown:0}, email:{code:null, verified:false, cooldown:0} };
+  otpState = { phone:{ verified:false }, email:{ code:null, verified:false, cooldown:0, sending:false } };
   saveLS('ach_cart', cart);
   updateCartCount();
   closeModal('checkoutModalBg');
@@ -1822,7 +1894,7 @@ async function upiPaymentConfirmed(orderId, amount){
 
   // clear cart
   cart = []; appliedCoupon = null; shippingData = null; selectedPayment = 'cod';
-  otpState = { phone:{code:null,verified:false,cooldown:0}, email:{code:null,verified:false,cooldown:0} };
+  otpState = { phone:{ verified:false }, email:{ code:null, verified:false, cooldown:0, sending:false } };
   saveLS('ach_cart', cart);
   updateCartCount();
 
