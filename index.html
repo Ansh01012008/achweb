@@ -1091,7 +1091,7 @@ function goToVerify(e){
    Email  → real 6-digit OTP sent via Brevo transactional API
    ======================================= */
 
-const BREVO_KEY = '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';
+const BREVO_KEY = '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';
 
 let otpState = {
   phone: { verified: false },
@@ -1142,7 +1142,8 @@ async function sendEmailOtp(){
 
     if(!res.ok){
       const err = await res.json().catch(()=>({}));
-      throw new Error(err.message || 'Email send failed');
+      console.error('Brevo error response:', res.status, err);
+      throw new Error(`Brevo ${res.status}: ${err.message || JSON.stringify(err)}`);
     }
 
     showToast(`OTP sent to ${shippingData.email}`);
@@ -1151,7 +1152,7 @@ async function sendEmailOtp(){
   } catch(e){
     console.error('Brevo email error:', e);
     const hint = document.getElementById('otpHint_email');
-    if(hint) hint.textContent = 'Could not send email. Check your email address and try again.';
+    if(hint) hint.textContent = e.message || 'Could not send email. Try again.';
     if(btn){ btn.disabled = false; btn.textContent = 'Resend Code'; }
   }
 
