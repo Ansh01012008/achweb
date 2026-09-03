@@ -111,6 +111,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;}
     <div class="admin-nav-item" data-tab="wheel" onclick="setAdminTab('wheel')"><span>Spin Wheel</span></div>
     <div class="admin-nav-item" data-tab="content" onclick="setAdminTab('content')"><span>Site Content</span></div>
     <div class="admin-nav-item" data-tab="orders" onclick="setAdminTab('orders')"><span>Orders</span></div>
+    <div class="admin-nav-item" data-tab="customers" onclick="setAdminTab('customers')"><span>Customers</span></div>
+    <div class="admin-nav-item" data-tab="analytics" onclick="setAdminTab('analytics')"><span>Analytics</span></div>
     <div class="admin-nav-item" data-tab="reviews" onclick="setAdminTab('reviews')"><span>Reviews</span></div>
     <div class="admin-nav-item" data-tab="leads" onclick="setAdminTab('leads')"><span>Newsletter &amp; Alerts</span></div>
     <div class="admin-nav-item" data-tab="settings" onclick="setAdminTab('settings')"><span>Settings</span></div>
@@ -121,6 +123,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;}
 </div>
 
 <!-- FIREBASE -->
+<!-- EmailJS for sending status update emails from admin -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script>emailjs.init('I4iWZBJq_43MymLwS');</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
@@ -276,6 +281,8 @@ function setAdminTab(tab){
   else if(tab==='wheel') main.innerHTML = renderWheelAdmin();
   else if(tab==='content') main.innerHTML = renderContentAdmin();
   else if(tab==='orders') main.innerHTML = renderOrdersAdmin();
+  else if(tab==='customers') main.innerHTML = renderCustomersAdmin();
+  else if(tab==='analytics') main.innerHTML = renderAnalyticsAdmin();
   else if(tab==='reviews') main.innerHTML = renderReviewsAdmin();
   else if(tab==='leads') main.innerHTML = renderLeadsAdmin();
   else if(tab==='settings') main.innerHTML = renderSettingsAdmin();
@@ -380,20 +387,42 @@ async function handleImgUpload(e){
   const statusEl = document.getElementById('uploadStatus');
   uploadingCount += files.length;
   for(const file of files){
-    statusEl.textContent = `Uploading ${file.name}…`;
+    statusEl.textContent = `Processing ${file.name}…`;
     try{
-      const path = `products/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_')}`;
-      const snap = await storage.ref(path).put(file);
-      const url = await snap.ref.getDownloadURL();
-      editingImages.push(url);
+      // resize + convert to base64 — no Firebase Storage rules needed
+      const base64 = await resizeAndEncode(file, 800);
+      editingImages.push(base64);
       renderImgPreviews();
+      statusEl.textContent = '';
     }catch(err){
-      statusEl.innerHTML = `<span style="color:#c0405f;">Upload failed — check Firebase Storage rules (see Settings tab). ${err.message||''}</span>`;
+      statusEl.innerHTML = `<span style="color:#c0405f;">Failed to process ${file.name}: ${err.message}</span>`;
     }finally{
       uploadingCount--;
       if(uploadingCount<=0) statusEl.textContent = '';
     }
   }
+}
+
+function resizeAndEncode(file, maxPx){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('Could not read file'));
+    reader.onload = evt => {
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('Could not load image'));
+      img.onload = ()=>{
+        const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 function renderImgPreviews(){
   const row = document.getElementById('imgPreviewRow');
@@ -644,6 +673,10 @@ function renderOrdersAdmin(){
                     onclick="confirmUpiPayment('${o.id}')">✓ Confirm Payment</button>
                 ` : ''}
                 ${isConfirmedUpi ? `<span style="font-size:11px;color:#3f5a41;">✓ Paid</span>` : ''}
+                ${(o.status==='Placed'||o.status==='Processing') && o.payment!=='UPI' || (o.status==='Placed'||o.status==='Processing') && isConfirmedUpi ? `
+                  <button class="mini-btn" style="margin-top:4px;" onclick="bookFakeCourier('${o.id}')">🚚 Book Courier</button>
+                ` : ''}
+                ${o.trackingNumber ? `<div style="font-size:11px;color:#8a7480;margin-top:4px;">${o.courierName||''} ${o.trackingNumber}</div>` : ''}
               </td>
             </tr>`;
           }).join('')}
@@ -773,3 +806,151 @@ setAdminTab = function(tab){ _origSetAdminTab(tab); if(tab==='wheel') afterWheel
 </script>
 </body>
 </html>
+<script>
+/* ===== OVERRIDES — email on status change, fake courier, customers, analytics ===== */
+
+/* replace updateOrderStatus */
+window.updateOrderStatus = async function(id, status){
+  await db.collection('orders').doc(id).update({status});
+  if(status === 'Shipped' || status === 'Delivered'){
+    const order = orders.find(o=>o.id===id);
+    if(order && order.customer && order.customer.email) sendStatusEmail(order, status);
+  }
+};
+
+function sendStatusEmail(order, status){
+  const tracking = order.trackingNumber ? `\n\nTracking: ${order.courierName||''} — ${order.trackingNumber}` : '';
+  const msg = status === 'Shipped'
+    ? `Great news! Your order ${order.id} has been shipped and is on its way.\n\nShipping to: ${order.customer.address}, ${order.customer.city} — ${order.customer.pin}${tracking}\n\nThank you for shopping with ACH Boutique!`
+    : `Your order ${order.id} has been delivered! We hope you love your purchase.\n\nThank you for shopping with ACH Boutique. Please leave us a review!`;
+  emailjs.send('service_xu0ot7h','template_336mhcg',{
+    to_email: order.customer.email, to_name: order.customer.name,
+    otp_code: msg, order_note: `Order ${order.id} — ${status}`
+  }).catch(e=>console.warn('Status email failed:',e));
+}
+
+/* replace confirmUpiPayment */
+window.confirmUpiPayment = async function(id){
+  if(!confirm('Confirm that you have received this UPI payment?')) return;
+  await db.collection('orders').doc(id).update({
+    paymentStatus:'Paid', paymentConfirmedAt: new Date().toISOString(), paymentConfirmedBy:'admin'
+  });
+  const order = orders.find(o=>o.id===id);
+  if(order && order.customer && order.customer.email){
+    emailjs.send('service_xu0ot7h','template_336mhcg',{
+      to_email: order.customer.email, to_name: order.customer.name,
+      otp_code: `Your UPI payment for order ${order.id} has been confirmed! ✓\n\nTotal: ₹${order.total}\nItems: ${order.items.map(i=>i.name+' x'+i.qty).join(', ')}\n\nWe will ship your order soon. Thank you for shopping with ACH Boutique!`,
+      order_note: `Payment confirmed — ${order.id}`
+    }).catch(e=>console.warn('UPI confirm email:',e));
+  }
+  alert('Payment confirmed. Customer notified by email.');
+};
+
+/* fake courier booking */
+window.bookFakeCourier = async function(orderId){
+  const awb = 'AWB'+Date.now().toString().slice(-10);
+  const couriers = ['Delhivery','BlueDart','DTDC','Ekart','XpressBees'];
+  const courier = couriers[Math.floor(Math.random()*couriers.length)];
+  await db.collection('orders').doc(orderId).update({
+    status:'Shipped', trackingNumber:awb, courierName:courier, shippedAt:new Date().toISOString()
+  });
+  const order = orders.find(o=>o.id===orderId);
+  if(order && order.customer && order.customer.email)
+    sendStatusEmail({...order, trackingNumber:awb, courierName:courier},'Shipped');
+  alert(`Shipment booked!\nCourier: ${courier}\nTracking: ${awb}\n\nCustomer has been emailed.`);
+};
+
+/* customers tab */
+window.renderCustomersAdmin = function(){
+  const map = {};
+  orders.forEach(o=>{
+    const key = o.customer?.phone||'unknown';
+    if(!map[key]) map[key]={name:o.customer?.name||'—',phone:key,email:o.customer?.email||'—',orders:[],total:0};
+    map[key].orders.push(o); map[key].total+=(o.total||0);
+  });
+  const customers = Object.values(map).sort((a,b)=>b.total-a.total);
+  return `
+    <div class="admin-topbar"><h2>Customers</h2><span style="font-size:13px;color:#8a7480;">${customers.length} unique customers</span></div>
+    <div class="admin-card">
+      ${customers.length===0?`<p style="font-size:13px;color:#8a7480;">No customers yet.</p>`:`
+      <table class="admin-table">
+        <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Orders</th><th>Total Spent</th><th>Last Order</th></tr></thead>
+        <tbody>${customers.map(c=>{
+          const last=[...c.orders].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+          return `<tr>
+            <td>${c.name}</td><td>${c.phone}</td><td style="font-size:12px;">${c.email}</td>
+            <td>${c.orders.length}</td><td style="font-weight:500;">${money(c.total)}</td>
+            <td style="font-size:12px;color:#8a7480;">${new Date(last.date).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`}
+    </div>`;
+};
+
+/* analytics tab */
+window.renderAnalyticsAdmin = function(){
+  const totalRev=orders.reduce((s,o)=>s+(o.total||0),0);
+  const thisMonth=new Date().toISOString().slice(0,7);
+  const monthOrders=orders.filter(o=>o.date&&o.date.startsWith(thisMonth));
+  const monthRev=monthOrders.reduce((s,o)=>s+(o.total||0),0);
+  const avgOrder=orders.length?Math.round(totalRev/orders.length):0;
+  const days=[...Array(30)].map((_,i)=>{
+    const d=new Date(); d.setDate(d.getDate()-(29-i));
+    const key=d.toISOString().slice(0,10);
+    return {label:d.toLocaleDateString('en-IN',{day:'numeric',month:'short'}),key,
+      value:orders.filter(o=>o.date&&o.date.slice(0,10)===key).reduce((s,o)=>s+(o.total||0),0)};
+  });
+  const maxRev=Math.max(...days.map(d=>d.value),1);
+  const prodSales={};
+  orders.forEach(o=>o.items&&o.items.forEach(i=>{prodSales[i.name]=(prodSales[i.name]||0)+(i.price*i.qty);}));
+  const topProds=Object.entries(prodSales).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const catSales={};
+  orders.forEach(o=>o.items&&o.items.forEach(i=>{
+    const cat=products.find(pp=>pp.name===i.name)?.category||'Other';
+    catSales[cat]=(catSales[cat]||0)+(i.price*i.qty);
+  }));
+  const payBreak={};
+  orders.forEach(o=>{payBreak[o.payment]=(payBreak[o.payment]||0)+1;});
+  return `
+    <div class="admin-topbar"><h2>Analytics</h2></div>
+    <div class="stat-grid">
+      <div class="stat-box"><div class="num">${money(totalRev)}</div><div class="lbl">Total Revenue</div></div>
+      <div class="stat-box"><div class="num">${money(monthRev)}</div><div class="lbl">This Month</div></div>
+      <div class="stat-box"><div class="num">${money(avgOrder)}</div><div class="lbl">Avg Order Value</div></div>
+      <div class="stat-box"><div class="num">${monthOrders.length}</div><div class="lbl">Orders This Month</div></div>
+    </div>
+    <div class="admin-card">
+      <h3 style="margin-bottom:14px;font-size:16px;">Revenue — Last 30 Days</h3>
+      <div style="display:flex;align-items:flex-end;gap:3px;height:100px;overflow-x:auto;padding-bottom:4px;">
+        ${days.map(d=>`<div style="flex:0 0 auto;width:20px;" title="${d.label}: ${money(d.value)}">
+          <div style="height:${Math.max(2,(d.value/maxRev)*90)}px;background:linear-gradient(180deg,var(--rose),var(--lavender-deep));border-radius:3px 3px 0 0;"></div>
+        </div>`).join('')}
+      </div>
+      <div style="font-size:11px;color:#8a7480;margin-top:6px;">Hover each bar for daily revenue</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <div class="admin-card" style="margin-bottom:0;">
+        <h3 style="margin-bottom:12px;font-size:16px;">Top Products</h3>
+        ${topProds.length===0?`<p style="font-size:13px;color:#8a7480;">No sales yet.</p>`:`
+        <table class="admin-table"><thead><tr><th>Product</th><th>Revenue</th></tr></thead>
+        <tbody>${topProds.map(([n,r])=>`<tr><td style="font-size:12px;">${n}</td><td style="font-weight:500;">${money(r)}</td></tr>`).join('')}</tbody></table>`}
+      </div>
+      <div class="admin-card" style="margin-bottom:0;">
+        <h3 style="margin-bottom:12px;font-size:16px;">By Category</h3>
+        ${Object.keys(catSales).length===0?`<p style="font-size:13px;color:#8a7480;">No sales yet.</p>`:`
+        <table class="admin-table"><thead><tr><th>Category</th><th>Revenue</th></tr></thead>
+        <tbody>${Object.entries(catSales).sort((a,b)=>b[1]-a[1]).map(([c,r])=>`<tr><td>${c}</td><td style="font-weight:500;">${money(r)}</td></tr>`).join('')}</tbody></table>`}
+      </div>
+    </div>
+    <div class="admin-card">
+      <h3 style="margin-bottom:12px;font-size:16px;">Payment Methods</h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${Object.entries(payBreak).map(([m,c])=>`
+          <div style="background:var(--blush);border-radius:10px;padding:14px 22px;text-align:center;">
+            <div style="font-size:22px;font-weight:600;">${c}</div>
+            <div style="font-size:12px;color:#8a7480;">${m}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+};
+</script>
