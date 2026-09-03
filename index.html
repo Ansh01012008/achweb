@@ -1294,9 +1294,13 @@ async function finalizeOrder(paymentMethod){
     items: cartLines().map(l=>({name:l.product.name, size:l.size, qty:l.qty, price:l.product.price})),
     coupon: appliedCoupon ? appliedCoupon.code : null,
     subtotal:t.subtotal, discount:t.discount, shipping:t.ship, gst:t.gst, gstApplied: settings.showGST, total:t.total,
-    status: 'Placed'
+    status: 'Placed', uid: window.currentUser ? window.currentUser.uid : null
   };
   try{ await db.collection('orders').doc(id).set(order); }catch(e){ console.warn('order write failed', e); }
+
+  // send order confirmation email
+  sendOrderConfirmationEmail(order);
+
   cart = []; appliedCoupon = null; shippingData = null; selectedPayment='cod';
   otpState = { phone:{ verified:false }, email:{ code:null, verified:false, cooldown:0, sending:false } };
   saveLS('ach_cart', cart);
@@ -1306,6 +1310,18 @@ async function finalizeOrder(paymentMethod){
   document.getElementById('successPayNote').textContent = paymentMethod==='COD' ? `Pay ${money(order.total)} on delivery.` : `Payment of ${money(order.total)} received via ${paymentMethod}.`;
   document.getElementById('successModalBg').classList.add('show');
   launchConfetti();
+}
+
+async function sendOrderConfirmationEmail(order){
+  try {
+    const itemsList = order.items.map(i=>`${i.name} (${i.size}) x${i.qty} — ₹${i.price}`).join('\n');
+    await emailjs.send('service_xu0ot7h', 'template_336mhcg', {
+      to_email: order.customer.email,
+      to_name:  order.customer.name,
+      otp_code: `Order Confirmed ✓\n\nOrder ID: ${order.id}\n\nItems:\n${itemsList}\n\nTotal: ₹${order.total}\nPayment: ${order.payment}\n\nWe'll ship to: ${order.customer.address}, ${order.customer.city} — ${order.customer.pin}\n\nThank you for shopping with ACH Boutique!`,
+      order_note: `Order ID: ${order.id}`
+    });
+  } catch(e){ console.warn('Confirmation email failed:', e); }
 }
 
 /* RECENTLY VIEWED */
@@ -1610,15 +1626,41 @@ function openAccountOrLogin(){
   }
 }
 
-function openSignedInPanel(){
+async function openSignedInPanel(){
   const phone = window.currentUser.phoneNumber || '';
-  // reuse wishModal as a lightweight account panel for now
+  const uid = window.currentUser.uid;
+
+  // fetch this user's orders
+  let myOrders = [];
+  try {
+    const snap = await db.collection('orders').where('uid','==',uid).orderBy('date','desc').limit(20).get();
+    myOrders = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e){ console.warn('orders fetch:', e); }
+
   document.getElementById('wishModal').innerHTML = `
     <button class="modal-close" onclick="closeModal('wishModalBg')">✕</button>
-    <div style="padding:36px;">
-      <h2 style="margin-bottom:6px;">My Account</h2>
+    <div style="padding:32px;">
+      <h2 style="margin-bottom:4px;">My Account</h2>
       <p style="font-size:13px;color:#8a7480;margin-bottom:24px;">Signed in as <b>${phone}</b></p>
-      <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="signOutUser()">Sign Out</button>
+
+      <h3 style="font-size:15px;margin-bottom:12px;">My Orders</h3>
+      ${myOrders.length === 0
+        ? `<p style="font-size:13px;color:#8a7480;margin-bottom:20px;">No orders yet. Start shopping!</p>`
+        : myOrders.map(o=>`
+          <div style="border:1px solid var(--stone);border-radius:12px;padding:14px 16px;margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:12px;font-weight:600;color:var(--charcoal);">${o.id}</span>
+              <span style="font-size:11px;background:${o.status==='Delivered'?'#eef6ef':o.status==='Cancelled'?'#fdecea':'#f3f0fa'};color:${o.status==='Delivered'?'#3f6b41':o.status==='Cancelled'?'#b5473a':'#5c4a8a'};padding:3px 10px;border-radius:20px;">${o.status}</span>
+            </div>
+            <div style="font-size:12px;color:#8a7480;margin-bottom:4px;">${new Date(o.date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</div>
+            <div style="font-size:13px;margin-bottom:6px;">${o.items.map(i=>i.name+' x'+i.qty).join(', ')}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-weight:600;">₹${o.total}</span>
+              <span style="font-size:11px;color:#8a7480;">${o.payment} · ${o.paymentStatus||''}</span>
+            </div>
+          </div>`).join('')}
+
+      <button class="btn btn-outline" style="width:100%;margin-top:12px;" onclick="signOutUser()">Sign Out</button>
     </div>`;
   document.getElementById('wishModalBg').classList.add('show');
 }
@@ -1877,13 +1919,21 @@ async function upiPaymentConfirmed(orderId, amount){
     });
   } catch(e){ console.warn('status update failed', e); }
 
+  // send confirmation email
+  if(shippingData){
+    sendOrderConfirmationEmail({
+      id: orderId, customer: shippingData, payment: 'UPI',
+      items: cartLines().map(l=>({name:l.product.name, size:l.size, qty:l.qty, price:l.product.price})),
+      total: amount
+    });
+  }
+
   // clear cart
   cart = []; appliedCoupon = null; shippingData = null; selectedPayment = 'cod';
   otpState = { phone:{ verified:false }, email:{ code:null, verified:false, cooldown:0, sending:false } };
   saveLS('ach_cart', cart);
   updateCartCount();
 
-  // remove UPI modal, show success modal
   const upiEl = document.getElementById('upiModalBg');
   if(upiEl) upiEl.remove();
 
