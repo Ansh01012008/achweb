@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sign In — ACH Boutique</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="config.js"></script>
+<style>
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--ivory);padding:20px;}
+.login-wrap{width:100%;max-width:440px;}
+.login-logo{font-family:'Fraunces',serif;font-size:26px;text-align:center;margin-bottom:8px;letter-spacing:.02em;}
+.login-tagline{font-size:13px;color:#8a7480;text-align:center;margin-bottom:32px;}
+.tab-row{display:flex;border-bottom:1px solid var(--stone);margin-bottom:24px;}
+.tab{flex:1;padding:10px;text-align:center;font-size:13px;cursor:pointer;color:#8a7480;border-bottom:2px solid transparent;transition:.15s;}
+.tab.active{color:var(--charcoal);border-bottom-color:var(--rose);font-weight:500;}
+.step{display:none;} .step.show{display:block;}
+.input-wrap{position:relative;}
+.prefix{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:14px;color:#8a7480;}
+.phone-input{padding-left:42px !important;}
+.otp-row{display:flex;gap:8px;}
+.otp-row input{flex:1;text-align:center;letter-spacing:6px;font-size:22px;padding:12px 8px;}
+.divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#8a7480;font-size:12px;}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--stone);}
+.google-btn{width:100%;padding:11px;border:1px solid var(--stone);border-radius:8px;background:var(--white);
+  display:flex;align-items:center;justify-content:center;gap:10px;font-size:14px;}
+.google-btn:hover{background:var(--blush);}
+.switch-link{text-align:center;font-size:12px;color:#8a7480;margin-top:18px;}
+.switch-link a{color:var(--charcoal);text-decoration:underline;cursor:pointer;}
+.back-shop{display:block;text-align:center;font-size:12px;color:#8a7480;margin-top:16px;}
+.back-shop:hover{color:var(--charcoal);}
+#recaptcha-container{position:fixed;bottom:0;left:0;z-index:999;}
+</style>
+</head>
+<body>
+<div id="recaptcha-container"></div>
+
+<div class="login-wrap">
+  <div class="login-logo">ACH Boutique</div>
+  <div class="login-tagline">Sign in to track orders, save addresses &amp; more</div>
+
+  <div class="card">
+    <div class="tab-row">
+      <div class="tab active" id="tabPhone" onclick="switchTab('phone')">📱 Mobile OTP</div>
+      <div class="tab" id="tabEmail" onclick="switchTab('email')">✉️ Email OTP</div>
+    </div>
+
+    <!-- PHONE FLOW -->
+    <div id="phoneFlow">
+      <!-- Step 1: enter phone -->
+      <div class="step show" id="ph1">
+        <div class="field">
+          <label>Mobile Number</label>
+          <div class="input-wrap">
+            <span class="prefix">+91</span>
+            <input class="field input phone-input" id="phoneNum" type="tel" maxlength="10"
+              placeholder="10-digit number" oninput="this.value=this.value.replace(/\D/g,'')"
+              onkeydown="if(event.key==='Enter')sendPhoneOtp()">
+          </div>
+          <div class="err" id="phErr1"></div>
+        </div>
+        <button class="btn" style="width:100%" id="sendPhoneBtn" onclick="sendPhoneOtp()">Send OTP</button>
+      </div>
+
+      <!-- Step 2: enter OTP -->
+      <div class="step" id="ph2">
+        <p style="font-size:13px;color:#8a7480;margin-bottom:16px;" id="phSentMsg">OTP sent</p>
+        <div class="field">
+          <label>One-Time Password</label>
+          <div class="otp-row">
+            <input type="tel" maxlength="6" id="phoneOtp" placeholder="------"
+              oninput="this.value=this.value.replace(/\D/g,'')"
+              onkeydown="if(event.key==='Enter')verifyPhoneOtp()">
+          </div>
+          <div class="err" id="phErr2"></div>
+        </div>
+        <button class="btn" style="width:100%" id="verifyPhoneBtn" onclick="verifyPhoneOtp()">Verify &amp; Sign In</button>
+        <div style="display:flex;justify-content:space-between;margin-top:12px;">
+          <span class="switch-link"><a onclick="resetPhone()">← Change number</a></span>
+          <span class="switch-link" id="phResendWrap"><a onclick="resendPhoneOtp()" id="phResend">Resend OTP</a></span>
+        </div>
+      </div>
+
+      <!-- Step 3: success -->
+      <div class="step" id="ph3" style="text-align:center;padding:16px 0;">
+        <div style="font-size:42px;margin-bottom:12px;">✅</div>
+        <div style="font-size:18px;font-family:'Fraunces',serif;margin-bottom:6px;">Signed in!</div>
+        <div style="font-size:13px;color:#8a7480;" id="phSuccessMsg">Redirecting…</div>
+      </div>
+    </div>
+
+    <!-- EMAIL FLOW -->
+    <div id="emailFlow" style="display:none;">
+      <div class="step show" id="em1">
+        <div class="field">
+          <label>Email Address</label>
+          <input type="email" id="emailAddr" placeholder="you@example.com"
+            onkeydown="if(event.key==='Enter')sendEmailOtpLogin()">
+          <div class="err" id="emErr1"></div>
+        </div>
+        <button class="btn" style="width:100%" id="sendEmailBtn" onclick="sendEmailOtpLogin()">Send OTP</button>
+      </div>
+
+      <div class="step" id="em2">
+        <p style="font-size:13px;color:#8a7480;margin-bottom:16px;" id="emSentMsg">OTP sent to your inbox</p>
+        <div class="field">
+          <label>One-Time Password</label>
+          <div class="otp-row">
+            <input type="tel" maxlength="6" id="emailOtp" placeholder="------"
+              oninput="this.value=this.value.replace(/\D/g,'')"
+              onkeydown="if(event.key==='Enter')verifyEmailOtpLogin()">
+          </div>
+          <div class="err" id="emErr2"></div>
+        </div>
+        <button class="btn" style="width:100%" id="verifyEmailBtn" onclick="verifyEmailOtpLogin()">Verify &amp; Sign In</button>
+        <div style="display:flex;justify-content:space-between;margin-top:12px;">
+          <span class="switch-link"><a onclick="resetEmail()">← Change email</a></span>
+          <span class="switch-link" id="emResendWrap"><a id="emResend" onclick="resendEmailOtp()">Resend OTP</a></span>
+        </div>
+      </div>
+
+      <div class="step" id="em3" style="text-align:center;padding:16px 0;">
+        <div style="font-size:42px;margin-bottom:12px;">✅</div>
+        <div style="font-size:18px;font-family:'Fraunces',serif;margin-bottom:6px;">Signed in!</div>
+        <div style="font-size:13px;color:#8a7480;">Redirecting…</div>
+      </div>
+    </div>
+  </div>
+
+  <a href="shop.html" class="back-shop">← Continue browsing without signing in</a>
+</div>
+
+<script>
+emailjs.init('I4iWZBJq_43MymLwS');
+
+// if already signed in, redirect immediately
+auth.onAuthStateChanged(user => {
+  if(user) redirectAfterLogin();
+});
+
+function getNextUrl(){
+  const p = new URLSearchParams(location.search);
+  return p.get('next') || 'account.html';
+}
+function redirectAfterLogin(){
+  setTimeout(()=>{ location.href = getNextUrl(); }, 1200);
+}
+
+/* ---- TAB SWITCH ---- */
+function switchTab(t){
+  document.getElementById('tabPhone').classList.toggle('active', t==='phone');
+  document.getElementById('tabEmail').classList.toggle('active', t==='email');
+  document.getElementById('phoneFlow').style.display = t==='phone' ? '' : 'none';
+  document.getElementById('emailFlow').style.display = t==='email' ? '' : 'none';
+}
+
+/* ---- PHONE OTP ---- */
+let confirmationResult = null;
+let recaptchaVerifier = null;
+let recaptchaReady = false;
+
+async function initRecaptcha(){
+  if(recaptchaReady) return;
+  recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container',{
+    size:'invisible', callback:()=>{},
+    'expired-callback':()=>{ recaptchaReady=false; recaptchaVerifier=null; }
+  });
+  await recaptchaVerifier.render();
+  recaptchaReady = true;
+}
+
+window.addEventListener('load', ()=> initRecaptcha().catch(console.warn));
+
+function authErrMsg(e){
+  const c = e.code||'';
+  if(c.includes('invalid-phone')) return 'Invalid number. Use a 10-digit Indian mobile number.';
+  if(c.includes('too-many-requests')) return 'Too many attempts. Please wait a few minutes.';
+  if(c.includes('invalid-verification-code')) return 'Incorrect OTP. Please try again.';
+  if(c.includes('session-expired')) return 'OTP expired. Please request a new one.';
+  if(c.includes('unauthorized-domain')) return 'This domain is not authorised in Firebase Console.';
+  if(c.includes('operation-not-allowed')) return 'Phone sign-in is not enabled in Firebase Console.';
+  return (e.message||'Something went wrong.').replace('Firebase: ','').split(' (auth/')[0];
+}
+
+async function sendPhoneOtp(){
+  const num = document.getElementById('phoneNum').value.trim();
+  const err = document.getElementById('phErr1');
+  if(num.length!==10){ err.textContent='Enter a valid 10-digit number.'; return; }
+  const btn = document.getElementById('sendPhoneBtn');
+  btn.disabled=true; btn.textContent='Sending…'; err.textContent='';
+  try{
+    if(!recaptchaReady) await initRecaptcha();
+    confirmationResult = await auth.signInWithPhoneNumber('+91'+num, recaptchaVerifier);
+    document.getElementById('phSentMsg').textContent = `OTP sent to +91 ${num}`;
+    showStep('ph','2');
+    startResendCooldown('ph', resendPhoneOtp);
+  }catch(e){
+    err.textContent = authErrMsg(e);
+    btn.disabled=false; btn.textContent='Send OTP';
+    recaptchaReady=false;
+    if(recaptchaVerifier){ try{recaptchaVerifier.clear();}catch(_){} recaptchaVerifier=null; }
+  }
+}
+
+async function verifyPhoneOtp(){
+  const otp = document.getElementById('phoneOtp').value.trim();
+  const err = document.getElementById('phErr2');
+  if(otp.length!==6){ err.textContent='Enter the 6-digit OTP.'; return; }
+  const btn = document.getElementById('verifyPhoneBtn');
+  btn.disabled=true; btn.textContent='Verifying…'; err.textContent='';
+  try{
+    const result = await confirmationResult.confirm(otp);
+    await saveCustomer(result.user);
+    document.getElementById('phSuccessMsg').textContent = `Welcome! Signed in as ${result.user.phoneNumber}`;
+    showStep('ph','3');
+    redirectAfterLogin();
+  }catch(e){
+    err.textContent = authErrMsg(e);
+    btn.disabled=false; btn.textContent='Verify & Sign In';
+  }
+}
+
+function resetPhone(){
+  showStep('ph','1');
+  document.getElementById('phErr1').textContent='';
+  document.getElementById('phoneOtp').value='';
+  const btn=document.getElementById('sendPhoneBtn');
+  btn.disabled=false; btn.textContent='Send OTP';
+}
+
+async function resendPhoneOtp(){
+  resetPhone();
+  document.getElementById('phoneNum').focus();
+}
+
+/* ---- EMAIL OTP ---- */
+let emailOtpCode = null;
+let emailOtpCooldown = 0;
+
+async function sendEmailOtpLogin(){
+  const email = document.getElementById('emailAddr').value.trim();
+  const err = document.getElementById('emErr1');
+  if(!email.includes('@')){ err.textContent='Enter a valid email address.'; return; }
+  const btn = document.getElementById('sendEmailBtn');
+  btn.disabled=true; btn.textContent='Sending…'; err.textContent='';
+  emailOtpCode = String(Math.floor(100000+Math.random()*900000));
+  try{
+    await emailjs.send('service_xu0ot7h','template_336mhcg',{
+      to_email: email, to_name: email.split('@')[0],
+      otp_code: `Your ACH Boutique sign-in code is: ${emailOtpCode}\n\nValid for 10 minutes. Do not share this with anyone.`,
+      order_note: 'Email OTP login'
+    });
+    document.getElementById('emSentMsg').textContent = `OTP sent to ${email}`;
+    showStep('em','2');
+    startResendCooldown('em', resendEmailOtp);
+  }catch(e){
+    err.textContent = 'Could not send email. Check your address and try again.';
+    btn.disabled=false; btn.textContent='Send OTP';
+    console.error('EmailJS error:', e);
+  }
+}
+
+async function verifyEmailOtpLogin(){
+  const otp = document.getElementById('emailOtp').value.trim();
+  const err = document.getElementById('emErr2');
+  if(otp.length!==6){ err.textContent='Enter the 6-digit OTP.'; return; }
+  if(otp!==emailOtpCode){ err.textContent='Incorrect OTP. Please try again.'; return; }
+  const btn = document.getElementById('verifyEmailBtn');
+  btn.disabled=true; btn.textContent='Verifying…'; err.textContent='';
+  // Sign in anonymously and attach email to customer doc
+  try{
+    const cred = await auth.signInAnonymously();
+    const email = document.getElementById('emailAddr').value.trim();
+    await saveCustomer(cred.user, { email });
+    showStep('em','3');
+    redirectAfterLogin();
+  }catch(e){
+    err.textContent = 'Sign-in failed. Please try again.';
+    btn.disabled=false; btn.textContent='Verify & Sign In';
+  }
+}
+
+function resetEmail(){
+  showStep('em','1');
+  document.getElementById('emailOtp').value='';
+  const btn=document.getElementById('sendEmailBtn');
+  btn.disabled=false; btn.textContent='Send OTP';
+}
+function resendEmailOtp(){ resetEmail(); }
+
+/* ---- HELPERS ---- */
+function showStep(prefix, num){
+  ['1','2','3'].forEach(n=>{
+    const el = document.getElementById(prefix+n);
+    if(el) el.classList.toggle('show', n===num);
+  });
+}
+
+function startResendCooldown(prefix, fn){
+  let secs = 30;
+  const el = document.getElementById(prefix+'Resend');
+  const tick = ()=>{
+    secs--;
+    if(el){ el.textContent = secs>0 ? `Resend in ${secs}s` : 'Resend OTP'; }
+    if(secs>0) setTimeout(tick,1000);
+    else if(el){ el.onclick = fn; }
+  };
+  if(el){ el.textContent='Resend in 30s'; el.onclick=null; }
+  tick();
+}
+
+async function saveCustomer(user, extra={}){
+  try{
+    await db.collection('customers').doc(user.uid).set({
+      uid: user.uid,
+      phone: user.phoneNumber || null,
+      lastLogin: new Date().toISOString(),
+      ...extra
+    }, {merge:true});
+  }catch(e){ console.warn('Customer save failed:', e); }
+}
+</script>
+</body>
+</html>

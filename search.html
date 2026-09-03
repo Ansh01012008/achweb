@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Search — ACH Boutique</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<style>
+.search-hero{background:var(--white);border-bottom:1px solid var(--stone);padding:24px;margin-bottom:28px;}
+.search-input-wrap{max-width:640px;margin:0 auto;position:relative;}
+.search-input-wrap input{width:100%;padding:14px 48px 14px 20px;border:2px solid var(--stone);border-radius:40px;font-size:16px;background:var(--ivory);}
+.search-input-wrap input:focus{outline:none;border-color:var(--rose);}
+.search-input-wrap button{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:linear-gradient(120deg,var(--rose),var(--lavender-deep));border:none;border-radius:50%;width:36px;height:36px;font-size:16px;color:#fff;cursor:pointer;}
+.results-wrap{display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:start;}
+.filters-panel{background:var(--white);border-radius:16px;padding:20px;box-shadow:0 2px 12px rgba(58,46,56,.06);position:sticky;top:80px;}
+.filter-section{margin-bottom:20px;}
+.filter-section h3{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8a7480;margin-bottom:12px;}
+.filter-chip{display:inline-block;padding:5px 12px;border:1px solid var(--stone);border-radius:16px;font-size:12px;cursor:pointer;margin:3px;transition:.15s;}
+.filter-chip:hover,.filter-chip.active{background:var(--charcoal);color:#fff;border-color:var(--charcoal);}
+.price-row{display:flex;gap:8px;align-items:center;}
+.price-row input{flex:1;padding:8px;border:1px solid var(--stone);border-radius:6px;font-size:13px;width:80px;}
+.sort-select{width:100%;padding:8px 10px;border:1px solid var(--stone);border-radius:8px;font-size:13px;background:var(--ivory);}
+.results-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.results-count{font-size:14px;color:#8a7480;}
+.product-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.product-card{background:var(--white);border-radius:14px;overflow:hidden;cursor:pointer;transition:transform .2s,box-shadow .2s;border:1px solid var(--stone);}
+.product-card:hover{transform:translateY(-4px);box-shadow:0 8px 24px rgba(58,46,56,.1);}
+.prod-img{width:100%;aspect-ratio:3/4;object-fit:cover;background:var(--blush);}
+.prod-info{padding:12px;}
+.prod-name{font-size:13px;font-weight:500;margin-bottom:4px;}
+.prod-cat{font-size:11px;color:#8a7480;margin-bottom:6px;}
+.prod-price{font-size:15px;font-weight:600;}
+.prod-mrp{font-size:11px;color:#8a7480;text-decoration:line-through;margin-left:4px;}
+.prod-badge{font-size:10px;background:var(--rose);color:#fff;padding:2px 8px;border-radius:10px;display:inline-block;margin-bottom:6px;}
+.no-results{text-align:center;padding:60px 20px;grid-column:1/-1;}
+.no-results .ico{font-size:48px;margin-bottom:12px;}
+@media(max-width:720px){
+  .results-wrap{grid-template-columns:1fr;}
+  .filters-panel{position:static;}
+  .product-grid{grid-template-columns:repeat(2,1fr);}
+}
+</style>
+</head>
+<body>
+<script>document.write(ACH_THEME);</script>
+
+<nav class="site-nav">
+  <a href="shop.html" class="logo">ACH Boutique</a>
+  <div class="nav-links">
+    <a href="shop.html">Shop</a>
+    <a href="orders.html">My Orders</a>
+    <a href="account.html">Account</a>
+  </div>
+  <div class="nav-icons">
+    <a href="account.html" class="icon-btn">👤</a>
+    <a href="shop.html" class="icon-btn">🛍</a>
+  </div>
+</nav>
+
+<div class="search-hero">
+  <div class="search-input-wrap">
+    <input type="text" id="mainSearch" placeholder="Search for products, categories, styles…"
+      onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">⌕</button>
+  </div>
+</div>
+
+<div class="page-wrap" style="padding-top:0;">
+  <div class="results-wrap">
+    <!-- Filters -->
+    <div class="filters-panel">
+      <div class="filter-section">
+        <h3>Category</h3>
+        <div id="catFilters"></div>
+      </div>
+      <div class="filter-section">
+        <h3>Price Range</h3>
+        <div class="price-row">
+          <input type="number" id="priceMin" placeholder="Min" oninput="applyFilters()">
+          <span style="font-size:12px;color:#8a7480;">to</span>
+          <input type="number" id="priceMax" placeholder="Max" oninput="applyFilters()">
+        </div>
+      </div>
+      <div class="filter-section">
+        <h3>Size</h3>
+        <div id="sizeFilters"></div>
+      </div>
+      <div class="filter-section">
+        <h3>Sort By</h3>
+        <select class="sort-select" id="sortBy" onchange="applyFilters()">
+          <option value="relevance">Relevance</option>
+          <option value="price-asc">Price: Low to High</option>
+          <option value="price-desc">Price: High to Low</option>
+          <option value="newest">Newest First</option>
+          <option value="discount">Biggest Discount</option>
+        </select>
+      </div>
+      <button class="btn btn-outline" style="width:100%;font-size:13px;" onclick="clearFilters()">Clear Filters</button>
+    </div>
+
+    <!-- Results -->
+    <div>
+      <div class="results-header">
+        <div class="results-count" id="resultsCount">Loading…</div>
+      </div>
+      <div class="product-grid" id="productGrid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let allProducts = [];
+let activeCategories = new Set();
+let activeSizes = new Set();
+let searchQuery = '';
+
+// load query from URL
+const urlQ = new URLSearchParams(location.search).get('q');
+if(urlQ){
+  document.getElementById('mainSearch').value = urlQ;
+  searchQuery = urlQ.toLowerCase();
+}
+
+db.collection('products').onSnapshot(snap=>{
+  allProducts = snap.docs.map(d=>({id:d.id,...d.data()}));
+  buildFilters();
+  applyFilters();
+});
+
+function buildFilters(){
+  const cats = [...new Set(allProducts.map(p=>p.category).filter(Boolean))].sort();
+  document.getElementById('catFilters').innerHTML = cats.map(c=>
+    `<span class="filter-chip ${activeCategories.has(c)?'active':''}" onclick="toggleCat('${c}',this)">${c}</span>`
+  ).join('');
+
+  const sizes = [...new Set(allProducts.flatMap(p=>p.sizes||[]))].sort();
+  document.getElementById('sizeFilters').innerHTML = sizes.map(s=>
+    `<span class="filter-chip ${activeSizes.has(s)?'active':''}" onclick="toggleSize('${s}',this)">${s}</span>`
+  ).join('');
+}
+
+function toggleCat(c,el){
+  activeCategories.has(c) ? activeCategories.delete(c) : activeCategories.add(c);
+  el.classList.toggle('active');
+  applyFilters();
+}
+function toggleSize(s,el){
+  activeSizes.has(s) ? activeSizes.delete(s) : activeSizes.add(s);
+  el.classList.toggle('active');
+  applyFilters();
+}
+function doSearch(){
+  searchQuery = document.getElementById('mainSearch').value.toLowerCase().trim();
+  history.replaceState({},'',searchQuery?`?q=${encodeURIComponent(searchQuery)}`:'?');
+  applyFilters();
+}
+function clearFilters(){
+  activeCategories.clear(); activeSizes.clear();
+  document.getElementById('priceMin').value='';
+  document.getElementById('priceMax').value='';
+  document.getElementById('sortBy').value='relevance';
+  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
+  applyFilters();
+}
+
+function applyFilters(){
+  let results = [...allProducts];
+  if(searchQuery) results = results.filter(p=>
+    p.name.toLowerCase().includes(searchQuery)||
+    (p.category||'').toLowerCase().includes(searchQuery)||
+    (p.desc||'').toLowerCase().includes(searchQuery)
+  );
+  if(activeCategories.size) results = results.filter(p=>activeCategories.has(p.category));
+  if(activeSizes.size) results = results.filter(p=>(p.sizes||[]).some(s=>activeSizes.has(s)));
+  const minP = Number(document.getElementById('priceMin').value)||0;
+  const maxP = Number(document.getElementById('priceMax').value)||Infinity;
+  results = results.filter(p=>p.price>=minP && p.price<=maxP);
+
+  const sort = document.getElementById('sortBy').value;
+  if(sort==='price-asc') results.sort((a,b)=>a.price-b.price);
+  else if(sort==='price-desc') results.sort((a,b)=>b.price-a.price);
+  else if(sort==='discount') results.sort((a,b)=>((b.mrp-b.price)/b.mrp)-((a.mrp-a.price)/a.mrp));
+
+  document.getElementById('resultsCount').textContent =
+    results.length===0 ? 'No products found' :
+    `${results.length} product${results.length>1?'s':''} found${searchQuery?' for "'+searchQuery+'"':''}`;
+
+  document.getElementById('productGrid').innerHTML = results.length===0
+    ? `<div class="no-results"><div class="ico">🔍</div><p>No products match your search.</p><button class="btn btn-outline" onclick="clearFilters()">Clear Filters</button></div>`
+    : results.map(p=>`
+      <div class="product-card" onclick="location.href='shop.html?product=${p.id}'">
+        <img class="prod-img" src="${p.images&&p.images[0]||''}" alt="${p.name}" onerror="this.style.display='none'">
+        <div class="prod-info">
+          ${p.badge?`<div class="prod-badge">${p.badge}</div>`:''}
+          <div class="prod-name">${p.name}</div>
+          <div class="prod-cat">${p.category||''}</div>
+          <div style="display:flex;align-items:baseline;gap:4px;">
+            <span class="prod-price">₹${(p.price||0).toLocaleString('en-IN')}</span>
+            ${p.mrp&&p.mrp>p.price?`<span class="prod-mrp">₹${p.mrp.toLocaleString('en-IN')}</span>`:''}
+          </div>
+        </div>
+      </div>`).join('');
+}
+</script>
+</body>
+</html>

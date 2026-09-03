@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Track Order — ACH Boutique</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<style>
+body{display:flex;flex-direction:column;align-items:center;min-height:100vh;background:var(--ivory);padding:40px 20px;}
+.logo{font-family:'Fraunces',serif;font-size:24px;margin-bottom:32px;letter-spacing:.02em;}
+.track-box{width:100%;max-width:500px;}
+.track-form{background:var(--white);border-radius:16px;padding:32px;box-shadow:0 2px 16px rgba(58,46,56,.08);margin-bottom:20px;}
+.track-form h2{font-family:'Fraunces',serif;font-size:22px;margin-bottom:6px;}
+.track-form p{font-size:13px;color:#8a7480;margin-bottom:24px;}
+.result-card{background:var(--white);border-radius:16px;padding:28px;box-shadow:0 2px 16px rgba(58,46,56,.08);}
+.status-banner{border-radius:10px;padding:16px;margin-bottom:20px;text-align:center;}
+.status-banner.placed{background:#f3f0fa;border:1px solid #d9cdf0;}
+.status-banner.processing{background:#fff8ec;border:1px solid #f5d6a0;}
+.status-banner.shipped{background:#e6f1fb;border:1px solid #b5d4f4;}
+.status-banner.delivered{background:#eef6ef;border:1px solid #c9dfcb;}
+.status-banner.cancelled{background:#fdecea;border:1px solid #f7c1c1;}
+.status-icon{font-size:36px;margin-bottom:8px;}
+.status-text{font-family:'Fraunces',serif;font-size:20px;margin-bottom:4px;}
+.status-sub{font-size:13px;color:#8a7480;}
+.progress-track{display:flex;margin:24px 0;}
+.p-step{flex:1;text-align:center;position:relative;}
+.p-step::after{content:'';position:absolute;top:14px;left:50%;width:100%;height:3px;background:var(--stone);z-index:0;}
+.p-step:last-child::after{display:none;}
+.p-dot{width:28px;height:28px;border-radius:50%;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;font-size:13px;position:relative;z-index:1;border:2px solid var(--stone);background:var(--white);}
+.p-dot.done{background:var(--moss);border-color:var(--moss);color:#fff;}
+.p-dot.current{background:var(--rose);border-color:var(--rose);color:#fff;}
+.p-label{font-size:11px;color:#8a7480;}
+.p-step.done .p-label,.p-step.current .p-label{color:var(--charcoal);}
+.order-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;}
+.meta-item{background:var(--ivory);border-radius:10px;padding:12px;}
+.meta-label{font-size:11px;color:#8a7480;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em;}
+.meta-value{font-size:14px;font-weight:500;}
+.items-section{margin-top:20px;}
+.items-section h3{font-size:14px;font-weight:500;margin-bottom:10px;color:#8a7480;text-transform:uppercase;letter-spacing:.04em;}
+.item-chip{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--stone);font-size:13px;}
+.item-chip:last-child{border:none;}
+.tracking-section{background:var(--blush);border-radius:10px;padding:14px;margin-top:16px;}
+.tracking-section h3{font-size:12px;color:var(--rose);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;}
+.err-msg{background:#fdecea;border-radius:10px;padding:16px;text-align:center;font-size:13px;color:#b5473a;margin-top:12px;display:none;}
+</style>
+</head>
+<body>
+<a href="shop.html" class="logo">ACH Boutique</a>
+
+<div class="track-box">
+  <div class="track-form">
+    <h2>Track Your Order</h2>
+    <p>Enter your Order ID and mobile number to check status.</p>
+    <div class="field">
+      <label>Order ID</label>
+      <input id="tOrderId" placeholder="e.g. ACH12345678" oninput="this.value=this.value.toUpperCase()"
+        onkeydown="if(event.key==='Enter')trackOrder()">
+    </div>
+    <div class="field">
+      <label>Mobile Number</label>
+      <input id="tPhone" type="tel" maxlength="10" placeholder="10-digit number"
+        oninput="this.value=this.value.replace(/\D/g,'')"
+        onkeydown="if(event.key==='Enter')trackOrder()">
+    </div>
+    <button class="btn" style="width:100%" id="trackBtn" onclick="trackOrder()">Track Order</button>
+    <div class="err-msg" id="trackErr">Order not found. Please check your Order ID and phone number.</div>
+  </div>
+
+  <div class="result-card" id="resultCard" style="display:none;"></div>
+</div>
+
+<script>
+// auto-fill from URL param
+const urlParams = new URLSearchParams(location.search);
+if(urlParams.get('id')) document.getElementById('tOrderId').value = urlParams.get('id');
+
+async function trackOrder(){
+  const orderId = document.getElementById('tOrderId').value.trim().toUpperCase();
+  const phone   = document.getElementById('tPhone').value.trim();
+  const errEl   = document.getElementById('trackErr');
+  const btn     = document.getElementById('trackBtn');
+
+  if(!orderId){ errEl.textContent='Enter your Order ID.'; errEl.style.display='block'; return; }
+  if(phone.length!==10){ errEl.textContent='Enter your 10-digit mobile number.'; errEl.style.display='block'; return; }
+
+  btn.disabled=true; btn.textContent='Searching…'; errEl.style.display='none';
+
+  try{
+    const doc = await db.collection('orders').doc(orderId).get();
+    if(!doc.exists){ throw new Error('not found'); }
+    const o = {id:doc.id, ...doc.data()};
+    // verify phone
+    const storedPhone = (o.customer?.phone||'').replace('+91','');
+    if(storedPhone !== phone){ throw new Error('phone mismatch'); }
+    renderResult(o);
+    // update URL
+    history.replaceState({},'',`?id=${orderId}`);
+  }catch(e){
+    errEl.textContent = 'Order not found. Please check your Order ID and mobile number.';
+    errEl.style.display='block';
+    document.getElementById('resultCard').style.display='none';
+  }
+  btn.disabled=false; btn.textContent='Track Order';
+}
+
+function renderResult(o){
+  const statusConfig = {
+    'Placed':     {icon:'🧾', cls:'placed',    msg:'Order received and being confirmed.'},
+    'Processing': {icon:'🔧', cls:'processing', msg:'Your order is being prepared for shipment.'},
+    'Shipped':    {icon:'🚚', cls:'shipped',    msg:'Your order is on its way!'},
+    'Delivered':  {icon:'✅', cls:'delivered',  msg:'Order delivered. Enjoy your purchase!'},
+    'Cancelled':  {icon:'❌', cls:'cancelled',  msg:'This order was cancelled.'},
+  };
+  const sc = statusConfig[o.status] || {icon:'📦',cls:'placed',msg:''};
+  const steps = ['Placed','Processing','Shipped','Delivered'];
+  const cur = steps.indexOf(o.status);
+
+  const stepsHtml = steps.map((s,i)=>`
+    <div class="p-step ${i<cur?'done':i===cur&&o.status!=='Cancelled'?'current':''}">
+      <div class="p-dot ${i<cur?'done':i===cur&&o.status!=='Cancelled'?'current':''}">
+        ${i<cur?'✓':i+1}
+      </div>
+      <div class="p-label">${s}</div>
+    </div>`).join('');
+
+  const trackingHtml = o.trackingNumber ? `
+    <div class="tracking-section">
+      <h3>Shipment Tracking</h3>
+      <div style="font-size:13px;">Courier: <b>${o.courierName||'—'}</b></div>
+      <div style="font-size:13px;margin-top:4px;">AWB Number: <b>${o.trackingNumber}</b></div>
+      <div style="font-size:12px;color:#8a7480;margin-top:4px;">
+        Shipped on ${o.shippedAt ? new Date(o.shippedAt).toLocaleDateString('en-IN',{day:'numeric',month:'long'}) : '—'}
+      </div>
+    </div>` : '';
+
+  const itemsHtml = (o.items||[]).map(i=>`
+    <div class="item-chip">
+      <span>${i.name} <span style="color:#8a7480;">(${i.size})</span></span>
+      <span>x${i.qty} · ₹${(i.price*i.qty).toLocaleString('en-IN')}</span>
+    </div>`).join('');
+
+  document.getElementById('resultCard').style.display='block';
+  document.getElementById('resultCard').innerHTML = `
+    <div class="status-banner ${sc.cls}">
+      <div class="status-icon">${sc.icon}</div>
+      <div class="status-text">${o.status}</div>
+      <div class="status-sub">${sc.msg}</div>
+    </div>
+
+    ${o.status!=='Cancelled' ? `<div class="progress-track">${stepsHtml}</div>` : ''}
+    ${trackingHtml}
+
+    <div class="order-meta-grid">
+      <div class="meta-item">
+        <div class="meta-label">Order ID</div>
+        <div class="meta-value">${o.id}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Order Date</div>
+        <div class="meta-value">${new Date(o.date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Total Amount</div>
+        <div class="meta-value">₹${(o.total||0).toLocaleString('en-IN')}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Payment</div>
+        <div class="meta-value">${o.payment}</div>
+      </div>
+    </div>
+
+    <div class="items-section">
+      <h3>Items (${(o.items||[]).length})</h3>
+      ${itemsHtml}
+    </div>
+
+    <div style="margin-top:20px;font-size:13px;color:#8a7480;">
+      Delivering to: <b>${o.customer?.name}</b> · ${o.customer?.address}, ${o.customer?.city} ${o.customer?.pin}
+    </div>`;
+}
+
+// auto-search if order ID in URL
+if(urlParams.get('id')){
+  document.getElementById('tPhone').focus();
+}
+</script>
+</body>
+</html>

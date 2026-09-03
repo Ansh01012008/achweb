@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>My Account — ACH Boutique</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="config.js"></script>
+<style>
+.account-grid{display:grid;grid-template-columns:240px 1fr;gap:24px;align-items:start;}
+.sidebar-nav{background:var(--white);border-radius:16px;padding:8px;box-shadow:0 2px 12px rgba(58,46,56,.06);position:sticky;top:80px;}
+.sidebar-nav a{display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:10px;font-size:14px;color:#8a7480;transition:.15s;}
+.sidebar-nav a:hover,.sidebar-nav a.active{background:var(--blush);color:var(--charcoal);}
+.sidebar-nav .ico{font-size:18px;width:22px;text-align:center;}
+.sidebar-nav .divider{height:1px;background:var(--stone);margin:8px 0;}
+.panel{display:none;} .panel.active{display:block;}
+.section-title{font-family:'Fraunces',serif;font-size:20px;margin-bottom:4px;}
+.section-sub{font-size:13px;color:#8a7480;margin-bottom:24px;}
+.avatar-wrap{display:flex;align-items:center;gap:16px;margin-bottom:28px;}
+.avatar{width:68px;height:68px;border-radius:50%;background:linear-gradient(135deg,var(--rose),var(--lavender-deep));
+  display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-size:26px;color:#fff;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.form-grid .full{grid-column:1/-1;}
+.addr-card{border:1px solid var(--stone);border-radius:12px;padding:16px;margin-bottom:12px;position:relative;}
+.addr-card.default-addr{border-color:var(--rose);background:var(--blush);}
+.addr-label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--rose);margin-bottom:6px;}
+.addr-text{font-size:13px;line-height:1.6;}
+.addr-actions{display:flex;gap:8px;margin-top:10px;}
+.mini-btn{padding:5px 12px;border:1px solid var(--stone);border-radius:6px;font-size:12px;background:var(--white);}
+.mini-btn:hover{background:var(--stone);}
+.mini-btn.danger{color:#b5473a;border-color:#f5c4c4;}
+.mini-btn.danger:hover{background:#fdecea;}
+.default-badge{position:absolute;top:12px;right:12px;font-size:10px;background:var(--rose);color:#fff;padding:2px 8px;border-radius:10px;}
+.add-addr-btn{border:2px dashed var(--stone);border-radius:12px;padding:16px;text-align:center;font-size:13px;color:#8a7480;cursor:pointer;transition:.15s;}
+.add-addr-btn:hover{border-color:var(--rose);color:var(--charcoal);}
+.addr-form{background:var(--blush);border-radius:12px;padding:20px;margin-bottom:16px;display:none;}
+.addr-form.show{display:block;}
+.sign-out-btn{width:100%;padding:12px;border:1px solid #f5c4c4;border-radius:8px;color:#b5473a;background:transparent;font-size:14px;margin-top:8px;}
+.sign-out-btn:hover{background:#fdecea;}
+@media(max-width:720px){
+  .account-grid{grid-template-columns:1fr;}
+  .sidebar-nav{position:static;display:flex;flex-wrap:wrap;gap:4px;padding:8px;}
+  .sidebar-nav a{padding:8px 12px;font-size:12px;}
+  .sidebar-nav .ico{display:none;}
+  .sidebar-nav .divider{display:none;}
+  .form-grid{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+<script>document.write(ACH_THEME);</script>
+
+<nav class="site-nav">
+  <a href="shop.html" class="logo">ACH Boutique</a>
+  <div class="nav-links">
+    <a href="shop.html">Shop</a>
+    <a href="orders.html">My Orders</a>
+    <a href="account.html" class="active">Account</a>
+  </div>
+  <div class="nav-icons">
+    <a href="orders.html" class="icon-btn" title="Orders">📦</a>
+    <a href="shop.html" class="icon-btn" title="Shop">🛍</a>
+  </div>
+</nav>
+
+<div class="page-wrap">
+  <div class="account-grid">
+    <!-- Sidebar -->
+    <div class="sidebar-nav">
+      <a href="#" class="active" onclick="showPanel('profile',this)"><span class="ico">👤</span> Profile</a>
+      <a href="#" onclick="showPanel('addresses',this)"><span class="ico">📍</span> Addresses</a>
+      <a href="orders.html"><span class="ico">📦</span> My Orders</a>
+      <a href="shop.html?wishlist=1"><span class="ico">♡</span> Wishlist</a>
+      <div class="divider"></div>
+      <a href="#" onclick="signOutUser()" style="color:#b5473a;"><span class="ico">←</span> Sign Out</a>
+    </div>
+
+    <!-- Main content -->
+    <div>
+      <!-- Profile panel -->
+      <div class="panel active" id="panel-profile">
+        <div class="card">
+          <div class="avatar-wrap">
+            <div class="avatar" id="avatarInitial">?</div>
+            <div>
+              <div style="font-family:'Fraunces',serif;font-size:20px;" id="profileName">Loading…</div>
+              <div style="font-size:13px;color:#8a7480;" id="profilePhone"></div>
+            </div>
+          </div>
+          <div class="section-title" style="font-size:16px;margin-bottom:16px;">Personal Details</div>
+          <div class="form-grid">
+            <div class="field">
+              <label>Full Name</label>
+              <input id="fName" placeholder="Your name">
+            </div>
+            <div class="field">
+              <label>Email Address</label>
+              <input id="fEmail" type="email" placeholder="you@example.com">
+            </div>
+            <div class="field">
+              <label>Mobile (cannot change)</label>
+              <input id="fPhone" disabled style="opacity:.6;">
+            </div>
+          </div>
+          <button class="btn" onclick="saveProfile()" id="saveProfileBtn">Save Changes</button>
+        </div>
+      </div>
+
+      <!-- Addresses panel -->
+      <div class="panel" id="panel-addresses">
+        <div class="card">
+          <div class="section-title">Saved Addresses</div>
+          <div class="section-sub">Save addresses for faster checkout</div>
+          <!-- Add address form -->
+          <div class="addr-form" id="addrForm">
+            <div style="font-size:14px;font-weight:500;margin-bottom:16px;" id="addrFormTitle">Add New Address</div>
+            <div class="form-grid">
+              <div class="field"><label>Label</label><input id="afLabel" placeholder="Home / Work / Other"></div>
+              <div class="field"><label>Full Name</label><input id="afName"></div>
+              <div class="field full"><label>Address Line</label><input id="afLine1"></div>
+              <div class="field"><label>City</label><input id="afCity"></div>
+              <div class="field"><label>State</label><input id="afState"></div>
+              <div class="field"><label>Pincode</label><input id="afPin" type="tel" maxlength="6"></div>
+              <div class="field"><label>Phone</label><input id="afPhone" type="tel" maxlength="10"></div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:4px;">
+              <button class="btn" onclick="saveAddress()" id="saveAddrBtn">Save Address</button>
+              <button class="btn btn-outline" onclick="closeAddrForm()">Cancel</button>
+            </div>
+          </div>
+          <!-- Address list -->
+          <div id="addrList"></div>
+          <div class="add-addr-btn" onclick="openAddrForm()">+ Add New Address</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+emailjs.init('I4iWZBJq_43MymLwS');
+
+let currentUser = null;
+let customerData = {};
+let editingAddrIdx = -1;
+
+auth.onAuthStateChanged(async user => {
+  if(!user){ location.href='login.html?next=account.html'; return; }
+  currentUser = user;
+  await loadCustomer();
+});
+
+async function loadCustomer(){
+  try{
+    const doc = await db.collection('customers').doc(currentUser.uid).get();
+    customerData = doc.exists ? doc.data() : {};
+  }catch(e){ customerData = {}; }
+  renderProfile();
+  renderAddresses();
+}
+
+function renderProfile(){
+  const name = customerData.name || '';
+  const phone = currentUser.phoneNumber || customerData.phone || '';
+  const email = customerData.email || '';
+  document.getElementById('profileName').textContent = name || 'Welcome!';
+  document.getElementById('profilePhone').textContent = phone;
+  document.getElementById('avatarInitial').textContent = name ? name[0].toUpperCase() : (phone.slice(-1)||'?');
+  document.getElementById('fName').value = name;
+  document.getElementById('fEmail').value = email;
+  document.getElementById('fPhone').value = phone;
+}
+
+async function saveProfile(){
+  const name  = document.getElementById('fName').value.trim();
+  const email = document.getElementById('fEmail').value.trim();
+  const btn   = document.getElementById('saveProfileBtn');
+  btn.disabled=true; btn.textContent='Saving…';
+  try{
+    await db.collection('customers').doc(currentUser.uid).set({ name, email }, {merge:true});
+    customerData.name  = name;
+    customerData.email = email;
+    renderProfile();
+    showToast('Profile saved ✓');
+  }catch(e){ showToast('Save failed. Please try again.'); }
+  btn.disabled=false; btn.textContent='Save Changes';
+}
+
+function renderAddresses(){
+  const addrs = customerData.addresses || [];
+  const list = document.getElementById('addrList');
+  if(addrs.length===0){ list.innerHTML=''; return; }
+  list.innerHTML = addrs.map((a,i)=>`
+    <div class="addr-card ${a.isDefault?'default-addr':''}">
+      ${a.isDefault?'<div class="default-badge">Default</div>':''}
+      <div class="addr-label">${a.label||'Address'}</div>
+      <div class="addr-text">
+        ${a.name}<br>
+        ${a.line1}<br>
+        ${a.city}, ${a.state} — ${a.pin}<br>
+        📱 ${a.phone}
+      </div>
+      <div class="addr-actions">
+        <button class="mini-btn" onclick="editAddress(${i})">Edit</button>
+        ${!a.isDefault?`<button class="mini-btn" onclick="setDefaultAddr(${i})">Set Default</button>`:''}
+        <button class="mini-btn danger" onclick="deleteAddress(${i})">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+function openAddrForm(idx=-1){
+  editingAddrIdx = idx;
+  const addrs = customerData.addresses || [];
+  const a = idx>=0 ? addrs[idx] : {};
+  document.getElementById('addrFormTitle').textContent = idx>=0 ? 'Edit Address' : 'Add New Address';
+  document.getElementById('afLabel').value  = a.label||'';
+  document.getElementById('afName').value   = a.name||customerData.name||'';
+  document.getElementById('afLine1').value  = a.line1||'';
+  document.getElementById('afCity').value   = a.city||'';
+  document.getElementById('afState').value  = a.state||'';
+  document.getElementById('afPin').value    = a.pin||'';
+  document.getElementById('afPhone').value  = a.phone||'';
+  document.getElementById('addrForm').classList.add('show');
+  document.getElementById('addrForm').scrollIntoView({behavior:'smooth'});
+}
+function editAddress(i){ openAddrForm(i); }
+function closeAddrForm(){ document.getElementById('addrForm').classList.remove('show'); }
+
+async function saveAddress(){
+  const addr = {
+    label:  document.getElementById('afLabel').value.trim()||'Home',
+    name:   document.getElementById('afName').value.trim(),
+    line1:  document.getElementById('afLine1').value.trim(),
+    city:   document.getElementById('afCity').value.trim(),
+    state:  document.getElementById('afState').value.trim(),
+    pin:    document.getElementById('afPin').value.trim(),
+    phone:  document.getElementById('afPhone').value.trim(),
+    isDefault: false
+  };
+  if(!addr.name||!addr.line1||!addr.city||!addr.pin){ showToast('Please fill all required fields.'); return; }
+  const btn = document.getElementById('saveAddrBtn');
+  btn.disabled=true; btn.textContent='Saving…';
+  const addrs = customerData.addresses ? [...customerData.addresses] : [];
+  if(editingAddrIdx>=0){ addr.isDefault = addrs[editingAddrIdx].isDefault; addrs[editingAddrIdx]=addr; }
+  else { if(addrs.length===0) addr.isDefault=true; addrs.push(addr); }
+  try{
+    await db.collection('customers').doc(currentUser.uid).set({addresses:addrs},{merge:true});
+    customerData.addresses = addrs;
+    renderAddresses();
+    closeAddrForm();
+    showToast('Address saved ✓');
+  }catch(e){ showToast('Save failed. Try again.'); }
+  btn.disabled=false; btn.textContent='Save Address';
+}
+
+async function deleteAddress(i){
+  if(!confirm('Delete this address?')) return;
+  const addrs = [...(customerData.addresses||[])];
+  addrs.splice(i,1);
+  if(addrs.length>0 && !addrs.find(a=>a.isDefault)) addrs[0].isDefault=true;
+  await db.collection('customers').doc(currentUser.uid).set({addresses:addrs},{merge:true});
+  customerData.addresses=addrs; renderAddresses();
+}
+
+async function setDefaultAddr(i){
+  const addrs = (customerData.addresses||[]).map((a,idx)=>({...a,isDefault:idx===i}));
+  await db.collection('customers').doc(currentUser.uid).set({addresses:addrs},{merge:true});
+  customerData.addresses=addrs; renderAddresses(); showToast('Default address updated ✓');
+}
+
+function showPanel(name, el){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-nav a').forEach(a=>a.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if(el) el.classList.add('active');
+}
+
+async function signOutUser(){
+  await auth.signOut();
+  location.href='login.html';
+}
+</script>
+</body>
+</html>
